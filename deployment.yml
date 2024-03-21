@@ -16,7 +16,7 @@ spec:
         "kubernetes.io/os": linux
       containers:
       - name: log4shell-demo
-        image: public.ecr.aws/f9n2h3p5/log4shellpub:<TAG>
+        image: archstein/log4shell:latest
         imagePullPolicy: "Always"
         ports:
         - containerPort: 8080
@@ -25,18 +25,11 @@ apiVersion: v1
 kind: Service
 metadata:
   name: log4shell-demo
-  annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: external
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
-    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
-    service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: deregistration_delay.timeout_seconds=15
-    
-
 spec:
+  type: NodePort
   ports:
-    - port: 8080
-      targetPort: 8080
-      protocol: TCP
-  type: LoadBalancer
+     - port: 8080
+       name: log4shell-demo
+       nodePort: 30080
   selector:
     app: log4shell-demo

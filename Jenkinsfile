@@ -1,58 +1,63 @@
 pipeline {
-    agent any
-    environment {
-        IMAGE_REPO_NAME="log4shellpub"
-        //REPLACE XXX WITH YOUR STUDENT NUMBER
-        IMAGE_TAG= "stdXXX"        
-        REPOSITORY_URI = "public.ecr.aws/f9n2h3p5/log4shellpub"
-        AWS_DEFAULT_REGION = "us-east-1"
-    }
-   
-    stages {
-    
-            stage('Logging into AWS ECR') {
-            steps {
-                script {
-                sh """aws ecr-public get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URI} """
-                }
-                 
-            }
-        } 
-    
+  environment {
+    dockerimagename = "archstein/log4shell"
+    dockerImage = ""
+  }
+  agent any
+  stages {
     stage('Clone repository') { 
             steps { 
                 script{
                 checkout scm
                 }
             }
-        }  
-  
-    // Building Docker images
-    stage('Building image') {
+        }
+      stage('Code Scanning - SAST'){
+          steps {
+                 sh 'env | grep -E "JENKINS_HOME|BUILD_ID|GIT_BRANCH|GIT_COMMIT" > /tmp/env'
+                 sh 'docker pull registry.fortidevsec.forticloud.com/fdevsec_sast:latest'
+                 sh 'docker run --rm --env-file /tmp/env --mount type=bind,source=$PWD,target=/scan registry.fortidevsec.forticloud.com/fdevsec_sast:latest'
+            }
+        }
+    stage('Build image') {
       steps{
         script {
-          dockerImage = docker.build "${IMAGE_REPO_NAME}:${IMAGE_TAG}-${env.BUILD_NUMBER}"
+          dockerImage = docker.build dockerimagename
         }
       }
     }
-   
-    // Uploading Docker images into AWS ECR
-    stage('Pushing to ECR') {
-     steps{  
-         script {
-                sh """docker tag ${IMAGE_REPO_NAME}:${IMAGE_TAG}-${env.BUILD_NUMBER} ${REPOSITORY_URI}:$IMAGE_TAG-${env.BUILD_NUMBER}"""
-                sh """docker push ${REPOSITORY_URI}:${IMAGE_TAG}-${env.BUILD_NUMBER}"""
-         }
+    stage('Pushing Image') {
+      environment {
+          registryCredential = 'archstein'
+           }
+      steps{
+        script {
+          docker.withRegistry( 'https://registry.hub.docker.com', registryCredential ) {
+          dockerImage.push("latest")
+          }
         }
       }
-      stage('Deploy'){
-            steps {
-                 sh 'sed -i "s/<TAG>/${IMAGE_TAG}-${BUILD_NUMBER}/" deployment.yml'
-                 sh 'kubectl apply -f deployment.yml'
-                 /*
-                 //If you are sure this deployment is already running and want to change the container image version, then you can use:
-                 sh 'kubectl set image deployments/dvwa 371571523880.dkr.ecr.us-east-2.amazonaws.com/dvwaxperts:${BUILD_NUMBER}'*/
+    }
+    stage ('Image Scan by FortiCNP'){
+      steps{
+      fortiCWPScanner block: true, imageName: 'archstein/log4shell:latest'
+      }
+    }
+    stage ('Deploy Container in Kubernetes') {
+        steps{    
+        
+        withKubeCredentials(kubectlCredentials: [[caCertificate: '', clusterName: 'sample', contextName: '', credentialsId: 'Jenkins_serviceAccount', namespace: 'default', serverUrl: 'https://172.16.16.180:6443']]) 
+        {
+        sh 'kubectl apply -f deployment.yml'
+      }
+    }
+   }
+   stage('DAST by FortiDAST'){
+      steps {
+         sh 'env | grep -E "JENKINS_HOME|BUILD_ID|GIT_BRANCH|GIT_COMMIT" > /tmp/env'
+         sh 'docker pull registry.fortidevsec.forticloud.com/fdevsec_dast:latest'
+         sh 'docker run --rm --env-file /tmp/env --mount type=bind,source=$PWD,target=/scan registry.fortidevsec.forticloud.com/fdevsec_dast:latest'
             }
-        } 
-    }
+        }   
+ }
 }
